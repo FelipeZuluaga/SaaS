@@ -1,8 +1,14 @@
 const db = require('../config/db');
 
+// Definición de límites por plan en el Backend
+const PLAN_LIMITS = {
+  Emprendedor: 50,
+  PyME: 500,
+  Pro: Infinity
+};
+
 // 1. Obtener todos los productos de UNA empresa específica
 const getProducts = async (req, res) => {
-  // Se lee desde los params de consulta (ej. /api/products?company_id=1) o req.user
   const company_id = req.query.company_id || req.headers['x-company-id'];
 
   if (!company_id) {
@@ -21,7 +27,7 @@ const getProducts = async (req, res) => {
   }
 };
 
-// 2. Crear un nuevo producto vinculado a la empresa
+// 2. Crear un nuevo producto (VALIDANDO LÍMITES DE LICENCIA)
 const createProduct = async (req, res) => {
   const { name, costPrice, salePrice, stock, company_id } = req.body;
 
@@ -30,6 +36,39 @@ const createProduct = async (req, res) => {
   }
 
   try {
+    // 🛑 VALIDACIÓN DE LICENCIA / PLAN DE LA EMPRESA
+    // A. Consultar el plan de la empresa
+    const [companyRows] = await db.query(
+      'SELECT plan FROM companies WHERE id = ?',
+      [company_id]
+    );
+
+    if (companyRows.length === 0) {
+      return res.status(404).json({ message: 'La compañía especificada no existe' });
+    }
+
+    const currentPlan = companyRows[0].plan || 'Emprendedor';
+    const maxAllowedProducts = PLAN_LIMITS[currentPlan] ?? PLAN_LIMITS.Emprendedor;
+
+    // B. Si el plan no es ilimitado, verificar cuántos productos tiene la empresa
+    if (maxAllowedProducts !== Infinity) {
+      const [countResult] = await db.query(
+        'SELECT COUNT(*) as total FROM products WHERE company_id = ?',
+        [company_id]
+      );
+
+      const currentCount = countResult[0].total;
+
+      if (currentCount >= maxAllowedProducts) {
+        return res.status(403).json({
+          message: `Has alcanzado el límite de ${maxAllowedProducts} productos permitidos en tu ${currentPlan}. Por favor actualiza tu licencia para continuar agregando productos.`,
+          code: 'PLAN_LIMIT_REACHED',
+          limit: maxAllowedProducts
+        });
+      }
+    }
+
+    // C. Si cumple con la licencia, procedemos a crear el producto normalmente
     const [result] = await db.query(
       'INSERT INTO products (company_id, name, costPrice, salePrice, stock) VALUES (?, ?, ?, ?, ?)',
       [company_id, name, costPrice, salePrice, stock]
@@ -55,7 +94,6 @@ const updateProduct = async (req, res) => {
   const { name, costPrice, salePrice, stock, company_id } = req.body;
 
   try {
-    // El WHERE incluye company_id para evitar que una empresa modifique productos de otra
     const [result] = await db.query(
       'UPDATE products SET name = ?, costPrice = ?, salePrice = ?, stock = ? WHERE id = ? AND company_id = ?',
       [name, costPrice, salePrice, stock, id, company_id]
