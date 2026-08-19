@@ -1,4 +1,6 @@
-import { DollarSign, TrendingUp, ShoppingBag, PieChart } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { DollarSign, TrendingUp, ShoppingBag, PieChart, Loader2 } from 'lucide-react';
+import { getSales } from '../services/saleService';
 
 // Formateador a Pesos Colombianos (COP)
 const formatCOP = (amount) => {
@@ -10,21 +12,81 @@ const formatCOP = (amount) => {
   }).format(amount || 0);
 };
 
-export default function NetProfits({ sales = [] }) {
-  // 1. Calcular Métricas Globales
-  const totalVentas = sales.reduce((acc, sale) => acc + (sale.total || 0), 0);
+export default function NetProfits({ sales: propSales }) {
+  const [sales, setSales] = useState(propSales || []);
+  const [loading, setLoading] = useState(!propSales || propSales.length === 0);
 
-  const costoTotal = sales.reduce((acc, sale) => {
+  // Sincronizar si se reciben ventas desde las props
+  useEffect(() => {
+    if (propSales && propSales.length > 0) {
+      setSales(propSales);
+      setLoading(false);
+    }
+  }, [propSales]);
+
+  // Cargar ventas desde la API de MySQL si no hay props
+  useEffect(() => {
+    const fetchSalesData = async () => {
+      try {
+        setLoading(true);
+        const data = await getSales();
+        setSales(data || []);
+      } catch (error) {
+        console.error('Error al obtener ventas para ganancias:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    if (!propSales || propSales.length === 0) {
+      fetchSalesData();
+    }
+  }, []);
+
+  // Normalizar array de ventas garantizando que items sea una lista válida
+  const normalizedSales = sales.map((sale) => {
+    let items = sale.items;
+    if (typeof items === 'string') {
+      try {
+        items = JSON.parse(items);
+      } catch (e) {
+        items = [];
+      }
+    }
+    return {
+      ...sale,
+      items: Array.isArray(items) ? items : []
+    };
+  });
+
+  // 1. Calcular Métricas Globales
+  const totalVentas = normalizedSales.reduce((acc, sale) => acc + (parseFloat(sale.total) || 0), 0);
+
+  const costoTotal = normalizedSales.reduce((acc, sale) => {
     const costoVenta = sale.items.reduce((itemAcc, item) => {
-      return itemAcc + ((item.costPrice || 0) * item.quantity);
+      const costPrice = parseFloat(item.costPrice) || 0;
+      const qty = parseInt(item.quantity, 10) || 0;
+      return itemAcc + (costPrice * qty);
     }, 0);
     return acc + costoVenta;
   }, 0);
 
   const gananciaNeta = totalVentas - costoTotal;
-  const totalArticulos = sales.reduce((acc, sale) => {
-    return acc + sale.items.reduce((itemAcc, item) => itemAcc + item.quantity, 0);
+
+  const totalArticulos = normalizedSales.reduce((acc, sale) => {
+    return acc + sale.items.reduce((itemAcc, item) => itemAcc + (parseInt(item.quantity, 10) || 0), 0);
   }, 0);
+
+  if (loading) {
+    return (
+      <div style={styles.loadingContainer}>
+        <Loader2 size={36} color="#38bdf8" className="spin" />
+        <p style={{ color: '#94a3b8', marginTop: '12px', fontSize: '0.9rem' }}>
+          Calculando balance financiero...
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div style={styles.container}>
@@ -88,7 +150,7 @@ export default function NetProfits({ sales = [] }) {
           <h3 style={styles.cardTitle}>Balance Financiero General</h3>
         </div>
 
-        {sales.length === 0 ? (
+        {normalizedSales.length === 0 ? (
           <div style={styles.emptyState}>
             <p style={{ color: '#64748b', margin: 0 }}>
               No hay datos suficientes para generar un balance. Realiza ventas en el módulo POS para visualizar rentabilidad.
@@ -126,6 +188,13 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: '24px'
+  },
+  loadingContainer: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '60px 0'
   },
   kpiGrid: {
     display: 'grid',

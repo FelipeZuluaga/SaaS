@@ -1,5 +1,8 @@
-import { useState } from 'react';
-import { ShoppingCart, Plus, Minus, Trash, CheckCircle, Package, CreditCard, Printer, FileText, X } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { useCompany } from '../context/CompanyContext';
+import { ShoppingCart, Plus, Minus, Trash, CheckCircle, Package, CreditCard, Printer, FileText, X, Loader2, Search } from 'lucide-react';
+import { createSale } from '../services/saleService';
+import { getProducts } from '../services/productService';
 
 // Formateador a Pesos Colombianos (COP)
 const formatCOP = (amount) => {
@@ -12,10 +15,15 @@ const formatCOP = (amount) => {
 };
 
 export default function Sales({ products = [], setProducts, sales = [], setSales }) {
+  const { company } = useCompany();
   const [cart, setCart] = useState([]);
   const [successMsg, setSuccessMsg] = useState(false);
   const [lastSale, setLastSale] = useState(null);
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const companyName = company?.name || 'Mi Negocio';
 
   // Agregar producto al carrito
   const addToCart = (product) => {
@@ -60,67 +68,93 @@ export default function Sales({ products = [], setProducts, sales = [], setSales
     setCart(cart.filter((item) => item.id !== id));
   };
 
-  // Calcular total
+  // Calcular total de la venta
   const totalSale = cart.reduce((acc, item) => acc + item.salePrice * item.quantity, 0);
 
-  // Procesar venta
-  const handleCheckout = (autoOpenInvoice = false) => {
-    if (cart.length === 0) return;
+  // Procesar venta en el Backend
+  const handleCheckout = async (autoOpenInvoice = false) => {
+    if (cart.length === 0 || submitting) return;
 
-    const newSale = {
-      id: Date.now(),
-      date: new Date().toLocaleString('es-CO'),
-      items: [...cart],
-      total: totalSale,
-    };
+    try {
+      setSubmitting(true);
 
-    if (setSales) {
-      setSales([newSale, ...sales]);
-    }
+      const payload = {
+        items: cart,
+        total: totalSale
+      };
 
-    const updatedProducts = products.map((prod) => {
-      const cartItem = cart.find((c) => c.id === prod.id);
-      if (cartItem) {
-        return { ...prod, stock: prod.stock - cartItem.quantity };
+      // 1. Guardar la venta en MySQL (saleService incluye company_id dinámicamente)
+      const response = await createSale(payload);
+      const newSale = response.sale;
+
+      // 2. Actualizar estado local de ventas
+      if (setSales) {
+        setSales([newSale, ...sales]);
       }
-      return prod;
-    });
 
-    if (setProducts) {
-      setProducts(updatedProducts);
+      // 3. Recargar productos desde el backend para reflejar el stock actualizado
+      const updatedProducts = await getProducts();
+      if (setProducts) {
+        setProducts(updatedProducts);
+      }
+
+      // 4. Limpiar carrito y dar confirmación
+      setLastSale(newSale);
+      setCart([]);
+      setSuccessMsg(true);
+
+      if (autoOpenInvoice) {
+        setShowInvoiceModal(true);
+      }
+
+      setTimeout(() => setSuccessMsg(false), 3000);
+    } catch (error) {
+      const errorMessage = error.response?.data?.message || 'Ocurrió un error al procesar la venta';
+      alert(errorMessage);
+    } finally {
+      setSubmitting(false);
     }
-
-    setLastSale(newSale);
-    setCart([]);
-    setSuccessMsg(true);
-
-    if (autoOpenInvoice) {
-      setShowInvoiceModal(true);
-    }
-
-    setTimeout(() => setSuccessMsg(false), 3000);
   };
 
   const handlePrint = () => {
     window.print();
   };
 
+  // Productos filtrados por buscador
+  const filteredProducts = products.filter((p) =>
+    p.name.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
   return (
     <div style={styles.container}>
       {/* Catálogo de Productos */}
       <div style={styles.productsSection}>
         <div style={styles.sectionHeader}>
-          <Package size={20} color="#38bdf8" />
-          <h3 style={styles.sectionTitle}>Seleccionar Productos</h3>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <Package size={20} color="#38bdf8" />
+            <h3 style={styles.sectionTitle}>Seleccionar Productos</h3>
+          </div>
+
+          {/* Buscador de catálogo */}
+          <div style={styles.searchWrapper}>
+            <Search size={16} color="#94a3b8" />
+            <input
+              type="text"
+              placeholder="Buscar..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              style={styles.searchInput}
+            />
+          </div>
         </div>
 
         <div style={styles.gridProducts}>
-          {products.length === 0 ? (
+          {filteredProducts.length === 0 ? (
             <p style={styles.emptyState}>
-              No tienes productos registrados. Agrégalos en el módulo de Inventario.
+              No hay productos coincidentes en el inventario.
             </p>
           ) : (
-            products.map((p) => {
+            filteredProducts.map((p) => {
               const isOut = p.stock <= 0;
               return (
                 <div 
@@ -171,14 +205,14 @@ export default function Sales({ products = [], setProducts, sales = [], setSales
                   <div style={styles.cartItemSub}>{formatCOP(item.salePrice)} c/u</div>
                 </div>
                 <div style={styles.cartControls}>
-                  <button onClick={() => updateQuantity(item.id, -1)} style={styles.qtyBtn}>
+                  <button onClick={() => updateQuantity(item.id, -1)} style={styles.qtyBtn} disabled={submitting}>
                     <Minus size={14} />
                   </button>
                   <span style={styles.qtyText}>{item.quantity}</span>
-                  <button onClick={() => updateQuantity(item.id, 1)} style={styles.qtyBtn}>
+                  <button onClick={() => updateQuantity(item.id, 1)} style={styles.qtyBtn} disabled={submitting}>
                     <Plus size={14} />
                   </button>
-                  <button onClick={() => removeFromCart(item.id)} style={styles.trashBtn}>
+                  <button onClick={() => removeFromCart(item.id)} style={styles.trashBtn} disabled={submitting}>
                     <Trash size={14} />
                   </button>
                 </div>
@@ -196,23 +230,31 @@ export default function Sales({ products = [], setProducts, sales = [], setSales
           <div style={{ display: 'flex', gap: '10px' }}>
             <button 
               onClick={() => handleCheckout(false)} 
-              disabled={cart.length === 0}
+              disabled={cart.length === 0 || submitting}
               style={{ 
                 ...styles.checkoutBtn, 
-                opacity: cart.length === 0 ? 0.4 : 1, 
-                cursor: cart.length === 0 ? 'not-allowed' : 'pointer' 
+                opacity: cart.length === 0 || submitting ? 0.4 : 1, 
+                cursor: cart.length === 0 || submitting ? 'not-allowed' : 'pointer' 
               }}
             >
-              <CreditCard size={18} /> Completar Venta
+              {submitting ? (
+                <>
+                  <Loader2 size={18} className="spin" /> Procesando...
+                </>
+              ) : (
+                <>
+                  <CreditCard size={18} /> Completar Venta
+                </>
+              )}
             </button>
 
             <button 
               onClick={() => handleCheckout(true)} 
-              disabled={cart.length === 0}
+              disabled={cart.length === 0 || submitting}
               style={{ 
                 ...styles.invoiceBtn, 
-                opacity: cart.length === 0 ? 0.4 : 1, 
-                cursor: cart.length === 0 ? 'not-allowed' : 'pointer' 
+                opacity: cart.length === 0 || submitting ? 0.4 : 1, 
+                cursor: cart.length === 0 || submitting ? 'not-allowed' : 'pointer' 
               }}
               title="Completar e Imprimir Factura"
             >
@@ -245,9 +287,15 @@ export default function Sales({ products = [], setProducts, sales = [], setSales
             {/* CONTENIDO RECIBO DE FACTURA */}
             <div style={styles.invoiceContent}>
               <div style={styles.invoiceHeader}>
-                <h2 style={{ margin: '0 0 4px 0', fontSize: '1.2rem', color: '#0f172a' }}>RECIBO DE VENTA</h2>
-                <span style={{ fontSize: '0.8rem', color: '#64748b' }}>Factura N° #{lastSale.id.toString().slice(-6)}</span>
-                <p style={{ margin: '4px 0 0 0', fontSize: '0.8rem', color: '#64748b' }}>Fecha: {lastSale.date}</p>
+                <h2 style={{ margin: '0 0 2px 0', fontSize: '1.2rem', color: '#0f172a', textTransform: 'uppercase' }}>
+                  {companyName}
+                </h2>
+                <span style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 'bold' }}>
+                  RECIBO N° #{lastSale.id.toString().slice(-6)}
+                </span>
+                <p style={{ margin: '4px 0 0 0', fontSize: '0.8rem', color: '#64748b' }}>
+                  Fecha: {lastSale.date}
+                </p>
               </div>
 
               <hr style={{ border: 'none', borderTop: '1px dashed #cbd5e1', margin: '16px 0' }} />
@@ -274,7 +322,7 @@ export default function Sales({ products = [], setProducts, sales = [], setSales
               <hr style={{ border: 'none', borderTop: '1px dashed #cbd5e1', margin: '16px 0' }} />
 
               <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', fontSize: '1.1rem', color: '#0f172a' }}>
-                <span>TOTAL PAID:</span>
+                <span>TOTAL:</span>
                 <span>{formatCOP(lastSale.total)}</span>
               </div>
 
@@ -310,15 +358,35 @@ const styles = {
   },
   sectionHeader: {
     display: 'flex',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    gap: '10px',
-    marginBottom: '20px'
+    marginBottom: '20px',
+    flexWrap: 'wrap',
+    gap: '12px'
   },
   sectionTitle: {
     margin: 0,
     fontSize: '1.1rem',
     color: '#f8fafc',
     fontWeight: '600'
+  },
+  searchWrapper: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    border: '1px solid #334155',
+    backgroundColor: '#090d16',
+    padding: '6px 10px',
+    borderRadius: '8px',
+    width: '180px'
+  },
+  searchInput: {
+    border: 'none',
+    background: 'transparent',
+    outline: 'none',
+    width: '100%',
+    fontSize: '0.85rem',
+    color: '#f8fafc'
   },
   gridProducts: { 
     display: 'grid', 

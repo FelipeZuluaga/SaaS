@@ -1,31 +1,68 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Loader2 } from 'lucide-react';
 import { useCompany } from '../context/CompanyContext';
+import { registerCompany } from '../services/authService';
 
 export default function Onboarding() {
   const navigate = useNavigate();
   const { setCompanyData } = useCompany();
-  
+
   const [formData, setFormData] = useState({
     name: '',
     sellType: '',
-    logoUrl: null
+    username: '',
+    password: ''
   });
+
+  const [logoFile, setLogoFile] = useState(null);
+  const [logoPreview, setLogoPreview] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   const handleLogoChange = (e) => {
     const file = e.target.files[0];
     if (file) {
-      setFormData({
-        ...formData,
-        logoUrl: URL.createObjectURL(file)
-      });
+      setLogoFile(file); // Guardamos el archivo binario para el backend
+      setLogoPreview(URL.createObjectURL(file)); // Guardamos la URL local para la vista previa
     }
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    setCompanyData(formData);
-    navigate('/Login');
+    setLoading(true);
+    setError('');
+
+    try {
+      // 1. Preparamos el FormData con los campos que requiere el backend
+      const data = new FormData();
+      data.append('companyName', formData.name);
+      data.append('businessType', formData.sellType);
+      data.append('username', formData.username);
+      data.append('password', formData.password);
+      
+      if (logoFile) {
+        data.append('logo', logoFile);
+      }
+
+      // 2. Enviamos la petición al servidor Node.js
+      await registerCompany(data);
+
+      // 3. Guardamos en el Contexto local por compatibilidad
+      setCompanyData({
+        ...formData,
+        logoUrl: logoPreview
+      });
+
+      // 4. Redirigimos al Login pasando el nombre de la compañía
+      navigate('/login', { state: { companyName: formData.name } });
+
+    } catch (err) {
+      console.error('Error al registrar la empresa:', err);
+      setError(err.response?.data?.message || 'Error al conectar con el servidor. Intenta de nuevo.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -38,6 +75,9 @@ export default function Onboarding() {
           <p style={styles.subtitle}>Configura tu empresa para empezar a operar</p>
         </div>
 
+        {/* Alerta de error dinámica */}
+        {error && <div style={styles.errorBox}>{error}</div>}
+
         <form onSubmit={handleSubmit} style={styles.form}>
           <div style={styles.inputGroup}>
             <label style={styles.label}>Nombre de la Compañía</label>
@@ -46,7 +86,8 @@ export default function Onboarding() {
               placeholder="Ej: Tienda Express" 
               required
               style={styles.input}
-              onChange={(e) => setFormData({...formData, name: e.target.value})}
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
             />
           </div>
 
@@ -57,14 +98,41 @@ export default function Onboarding() {
               placeholder="Ej: Ropa, Comida, Electrónica..." 
               required
               style={styles.input}
-              onChange={(e) => setFormData({...formData, sellType: e.target.value})}
+              value={formData.sellType}
+              onChange={(e) => setFormData({ ...formData, sellType: e.target.value })}
             />
+          </div>
+
+          {/* Nuevos campos para crear las credenciales iniciales */}
+          <div style={styles.row}>
+            <div style={styles.inputGroup}>
+              <label style={styles.label}>Usuario Único</label>
+              <input 
+                type="text" 
+                placeholder="usuario123" 
+                required
+                style={styles.input}
+                value={formData.username}
+                onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+              />
+            </div>
+            <div style={styles.inputGroup}>
+              <label style={styles.label}>Contraseña</label>
+              <input 
+                type="password" 
+                placeholder="••••••••" 
+                required
+                style={styles.input}
+                value={formData.password}
+                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+              />
+            </div>
           </div>
 
           <div style={styles.inputGroup}>
             <label style={styles.label}>Subir Logo</label>
             <label htmlFor="logo-upload" style={styles.fileUploadBtn}>
-              {formData.logoUrl ? 'Cambiar imagen' : 'Seleccionar archivo...'}
+              {logoPreview ? 'Cambiar imagen' : 'Seleccionar archivo...'}
             </label>
             <input 
               id="logo-upload"
@@ -75,14 +143,20 @@ export default function Onboarding() {
             />
           </div>
 
-          {formData.logoUrl && (
+          {logoPreview && (
             <div style={styles.previewContainer}>
-              <img src={formData.logoUrl} alt="Logo preview" style={styles.previewImage} />
+              <img src={logoPreview} alt="Logo preview" style={styles.previewImage} />
             </div>
           )}
 
-          <button type="submit" style={styles.btnPrimary}>
-            Crear Panel Principal
+          <button type="submit" disabled={loading} style={styles.btnPrimary}>
+            {loading ? (
+              <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                <Loader2 size={18} className="spin" /> Configurando...
+              </span>
+            ) : (
+              'Crear Panel Principal'
+            )}
           </button>
         </form>
       </div>
@@ -90,17 +164,13 @@ export default function Onboarding() {
   );
 }
 
-// Paleta de colores NovaForge Software:
-// Azul Marino Fondo: #0d1322 / #131b2e
-// Azul Eléctrico Accento: #2563eb / #1d4ed8
-// Texto / Bordes Glow: #e2e8f0 / #1e293b
 const styles = {
   container: { 
     display: 'flex', 
     justifyContent: 'center', 
     alignItems: 'center', 
     minHeight: '100vh', 
-    backgroundColor: '#0a0e1a', // Fondo oscuro tipo NovaForge
+    backgroundColor: '#0a0e1a', 
     fontFamily: "'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
     padding: '20px'
   },
@@ -111,12 +181,12 @@ const styles = {
     boxShadow: '0 20px 40px rgba(0, 0, 0, 0.5), 0 0 15px rgba(37, 99, 235, 0.15)', 
     border: '1px solid #1e293b',
     width: '100%',
-    maxWidth: '420px',
+    maxWidth: '440px',
     boxSizing: 'border-box'
   },
   header: {
     textAlign: 'center',
-    marginBottom: '2rem'
+    marginBottom: '1.5rem'
   },
   brandBadge: {
     display: 'inline-block',
@@ -138,10 +208,25 @@ const styles = {
     color: '#94a3b8',
     fontSize: '0.9rem'
   },
+  errorBox: {
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    border: '1px solid rgba(239, 68, 68, 0.3)',
+    color: '#f87171',
+    padding: '10px 14px',
+    borderRadius: '8px',
+    fontSize: '0.85rem',
+    marginBottom: '16px',
+    textAlign: 'center'
+  },
   form: { 
     display: 'flex', 
     flexDirection: 'column', 
-    gap: '18px' 
+    gap: '16px' 
+  },
+  row: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: '12px'
   },
   inputGroup: {
     display: 'flex',
@@ -183,8 +268,8 @@ const styles = {
     margin: '5px 0' 
   },
   previewImage: { 
-    width: '70px', 
-    height: '70px', 
+    width: '65px', 
+    height: '65px', 
     objectFit: 'cover', 
     borderRadius: '50%',
     border: '2px solid #2563eb',

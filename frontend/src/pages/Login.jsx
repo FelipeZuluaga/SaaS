@@ -1,18 +1,53 @@
 import { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
+import { Loader2 } from 'lucide-react';
+import { loginUser } from '../services/authService';
 
 export default function Login() {
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // Toma el nombre de la compañía enviado desde Onboarding si existe
   const [credentials, setCredentials] = useState({
-    companyId: '',
+    companyId: location.state?.companyName || '',
     username: '',
     password: ''
   });
 
-  const handleSubmit = (e) => {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    console.log('Login simulado con:', credentials);
-    navigate('/dashboard');
+    setLoading(true);
+    setError('');
+
+    try {
+      const data = await loginUser({
+        companyName: credentials.companyId,
+        username: credentials.username,
+        password: credentials.password
+      });
+
+      // Guardar sesión en el navegador
+      if (data.token) {
+        localStorage.setItem('token', data.token);
+      }
+      if (data.company) {
+        localStorage.setItem('company', JSON.stringify(data.company));
+      }
+      if (data.user) {
+        localStorage.setItem('user', JSON.stringify(data.user));
+      }
+
+      // Redirigir al dashboard principal
+      navigate('/dashboard');
+    } catch (err) {
+      console.error('Error al iniciar sesión:', err);
+      setError(err.response?.data?.message || 'Compañía, usuario o contraseña incorrectos');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -25,6 +60,9 @@ export default function Login() {
           <p style={styles.subtitle}>Ingresa tus credenciales para acceder</p>
         </div>
 
+        {/* Mensaje de error dinámico */}
+        {error && <div style={styles.errorBox}>{error}</div>}
+
         <form onSubmit={handleSubmit} style={styles.form}>
           <div style={styles.inputGroup}>
             <label style={styles.label}>Escoger Compañía / ID</label>
@@ -33,6 +71,7 @@ export default function Login() {
               placeholder="Ej. MiEmpresa" 
               required 
               style={styles.input}
+              value={credentials.companyId}
               onChange={(e) => setCredentials({...credentials, companyId: e.target.value})}
             />
           </div>
@@ -44,6 +83,7 @@ export default function Login() {
               placeholder="usuario123" 
               required 
               style={styles.input}
+              value={credentials.username}
               onChange={(e) => setCredentials({...credentials, username: e.target.value})}
             />
           </div>
@@ -55,12 +95,19 @@ export default function Login() {
               placeholder="••••••••" 
               required 
               style={styles.input}
+              value={credentials.password}
               onChange={(e) => setCredentials({...credentials, password: e.target.value})}
             />
           </div>
 
-          <button type="submit" style={styles.btnPrimary}>
-            Ingresar al Sistema
+          <button type="submit" disabled={loading} style={styles.btnPrimary}>
+            {loading ? (
+              <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                <Loader2 size={18} className="spin" /> Ingresando...
+              </span>
+            ) : (
+              'Ingresar al Sistema'
+            )}
           </button>
         </form>
 
@@ -98,7 +145,7 @@ const styles = {
   },
   header: {
     textAlign: 'center',
-    marginBottom: '2rem'
+    marginBottom: '1.5rem'
   },
   brandBadge: {
     display: 'inline-block',
@@ -119,6 +166,16 @@ const styles = {
     margin: 0,
     color: '#94a3b8',
     fontSize: '0.85rem'
+  },
+  errorBox: {
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    border: '1px solid rgba(239, 68, 68, 0.3)',
+    color: '#f87171',
+    padding: '10px 14px',
+    borderRadius: '8px',
+    fontSize: '0.85rem',
+    marginBottom: '16px',
+    textAlign: 'center'
   },
   form: { 
     display: 'flex', 

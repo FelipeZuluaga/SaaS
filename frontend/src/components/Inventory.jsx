@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useCompany } from '../context/CompanyContext';
-import { Lock, MessageCircle, Package, Search, Trash2, Plus } from 'lucide-react';
+import { Lock, MessageCircle, Package, Search, Trash2, Plus, Loader2 } from 'lucide-react';
+import { getProducts, createProduct, deleteProduct } from '../services/productService';
 
-// Función para formatear números en Pesos Colombianos (COP) con separadores de miles
+// Función para formatear números en Pesos Colombianos (COP)
 const formatCOP = (amount) => {
   return new Intl.NumberFormat('es-CO', {
     style: 'currency',
@@ -16,6 +17,9 @@ const Inventory = ({ productsList = [], setProducts }) => {
   const { company } = useCompany();
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
 
   const [newProduct, setNewProduct] = useState({
     name: '',
@@ -27,6 +31,25 @@ const Inventory = ({ productsList = [], setProducts }) => {
   const maxProducts = company?.maxProducts ?? Infinity;
   const companyName = company?.name || 'mi empresa';
 
+  // Cargar productos desde la base de datos al montar el componente
+  useEffect(() => {
+    loadInventory();
+  }, []);
+
+  const loadInventory = async () => {
+    try {
+      setLoading(true);
+      const data = await getProducts();
+      if (setProducts) {
+        setProducts(data);
+      }
+    } catch (error) {
+      console.error('Error al cargar inventario:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleChange = (e) => {
     setNewProduct({
       ...newProduct,
@@ -34,7 +57,7 @@ const Inventory = ({ productsList = [], setProducts }) => {
     });
   };
 
-  const handleSaveProduct = (e) => {
+  const handleSaveProduct = async (e) => {
     e.preventDefault();
 
     if (productsList.length >= maxProducts) {
@@ -47,24 +70,45 @@ const Inventory = ({ productsList = [], setProducts }) => {
       return;
     }
 
-    const createdProduct = {
-      id: Date.now(),
+    const productPayload = {
       name: newProduct.name,
       costPrice: parseFloat(newProduct.costPrice) || 0,
       salePrice: parseFloat(newProduct.salePrice) || 0,
-      stock: parseInt(newProduct.stock) || 0
+      stock: parseInt(newProduct.stock, 10) || 0
     };
 
-    if (setProducts) {
-      setProducts([...productsList, createdProduct]);
-    }
+    try {
+      setSubmitting(true);
+      // Petición a productService (agrega company_id internamente)
+      const createdProduct = await createProduct(productPayload);
 
-    setNewProduct({ name: '', costPrice: '', salePrice: '', stock: '' });
+      if (setProducts) {
+        setProducts([createdProduct, ...productsList]);
+      }
+
+      setNewProduct({ name: '', costPrice: '', salePrice: '', stock: '' });
+    } catch (error) {
+      alert('Error al guardar el producto en el servidor');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const handleDeleteProduct = (id) => {
-    if (setProducts) {
-      setProducts(productsList.filter(p => p.id !== id));
+  const handleDeleteProduct = async (id) => {
+    if (!window.confirm('¿Seguro que deseas eliminar este producto?')) return;
+
+    try {
+      setDeletingId(id);
+      // Petición a productService (agrega company_id internamente)
+      await deleteProduct(id);
+
+      if (setProducts) {
+        setProducts(productsList.filter(p => p.id !== id));
+      }
+    } catch (error) {
+      alert('Error al eliminar el producto del servidor');
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -140,8 +184,22 @@ const Inventory = ({ productsList = [], setProducts }) => {
             </div>
           </div>
 
-          <button type="submit" style={styles.btnPrimary}>
-            Guardar Producto
+          <button 
+            type="submit" 
+            disabled={submitting} 
+            style={{
+              ...styles.btnPrimary,
+              opacity: submitting ? 0.7 : 1,
+              cursor: submitting ? 'not-allowed' : 'pointer'
+            }}
+          >
+            {submitting ? (
+              <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Loader2 size={16} className="spin" /> Guardando...
+              </span>
+            ) : (
+              'Guardar Producto'
+            )}
           </button>
         </form>
       </div>
@@ -181,7 +239,15 @@ const Inventory = ({ productsList = [], setProducts }) => {
               </tr>
             </thead>
             <tbody>
-              {filteredProducts.length > 0 ? (
+              {loading ? (
+                <tr>
+                  <td colSpan="6" style={styles.emptyState}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                      <Loader2 size={18} className="spin" color="#38bdf8" /> Cargando productos desde la base de datos...
+                    </div>
+                  </td>
+                </tr>
+              ) : filteredProducts.length > 0 ? (
                 filteredProducts.map((p) => {
                   const ganancia = (p.salePrice || 0) - (p.costPrice || 0);
                   return (
@@ -196,10 +262,15 @@ const Inventory = ({ productsList = [], setProducts }) => {
                       <td style={{ ...styles.td, textAlign: 'center' }}>
                         <button 
                           onClick={() => handleDeleteProduct(p.id)}
+                          disabled={deletingId === p.id}
                           style={styles.btnDelete}
                           title="Eliminar producto"
                         >
-                          <Trash2 size={16} />
+                          {deletingId === p.id ? (
+                            <Loader2 size={16} className="spin" />
+                          ) : (
+                            <Trash2 size={16} />
+                          )}
                         </button>
                       </td>
                     </tr>
